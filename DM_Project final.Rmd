@@ -1,0 +1,872 @@
+---
+title: "DM Project"
+author: "Kexin Zhang"
+date: "3/26/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Loading library 
+library(ggplot2)
+library(MASS)
+library(class)
+library(caret)
+library(dplyr)
+library(randomForest)
+library(rpart)
+library(e1071)
+library(ISLR)
+```
+
+## Data Cleaning
+```{r,echo = FALSE, message = FALSE,warning = FALSE}
+df <- read.csv('/Users/lizhizicui/Desktop/Data/original_train.csv')
+
+#department.sub <- read.csv('/Users/lizhizicui/Desktop/GWU/2020Spring/Data\ Mining/walmart-recruiting-trip-type-classification/Department.csv')
+
+
+department.full <- read.csv('/Users/lizhizicui/Desktop/Data/DepartmentFull.csv')
+
+```
+
+
+```{r,echo = FALSE, message = FALSE,warning = FALSE}
+summary(df) # view data
+```
+
+```{r, message = FALSE,warning = FALSE}
+df1 <- df[,c(1,3,5,6)] # removing unneccesary variable
+
+df1 <- df1%>%
+  filter(TripType != '999') # removing unclassed observations
+
+df1 <- df1%>%
+  filter(ScanCount > 0) # removing any return count
+
+df2 <- na.omit(df1) # removing NAs
+  
+```
+
+```{r, message = FALSE,warning = FALSE}
+# select 10 Triptypes
+t <-df2%>%
+  group_by(TripType)%>%
+  count()
+
+t1 <- t%>%
+  filter(n > 15000)%>%
+  filter(n < 90000)
+
+c <- t1$TripType
+
+walmart <- df2%>%
+  filter(TripType == c)
+
+summary(walmart)
+```
+
+## Data Manipulation
+
+```{r, message = FALSE,warning = FALSE}
+# Create dummy variables for Weekday
+walmart$Monday <- 0
+walmart$Tuesday <- 0
+walmart$Wednesday <- 0
+walmart$Thursday <- 0
+walmart$Friday <- 0
+walmart$Saturday  <- 0
+walmart$Sunday <- 0
+
+for (i in 1:nrow(walmart)){
+  if (walmart[i,2] == 'Monday') {
+    walmart[i,5] <- '1'
+    } else if ( walmart[i,2] == 'Tuesday'){
+    walmart[i,6] <- '1'
+    } else if ( walmart[i,2] == 'Wednesday') {
+    walmart[i,7] <- '1'
+    } else if ( walmart[i,2] == 'Thursday') {
+      walmart[i,8] <- '1'
+    } else if ( walmart[i,2] == 'Friday') {
+      walmart[i,9] <- '1'
+    } else if ( walmart[i,2] == 'Saturday') {
+      walmart[i,10] <- '1'
+    } else {
+      walmart[i,11] <- '1'
+    }
+  }
+  
+```
+
+## Final Dataset
+```{r, message = FALSE,warning = FALSE}
+# Combined pre-created dataset 
+# Re-categorized DepartmentDescription into 9 larger categories
+# Created dummy variables for these 9 larger categories
+full0 <- left_join(x = walmart, y = department.full, by = 'DepartmentDescription', all.x = F)
+full0 <- na.omit(full0)
+full0 <- full0[,-4]
+```
+
+```{r,message = FALSE,warning = FALSE}
+full <- full0[,-c(67,78,81,82,83,85,86)]
+full$TripType <- as.factor(full$TripType) # factorize variables
+full$index <- as.integer(row.names(full)) 
+```
+
+
+```{r}
+# Stratify Sampling
+library(splitstackshape)
+set.seed(123)
+out <- stratified(full,c("X1.HR.PHOTO","BOOKS.AND.MAGAZINES","CAMERAS.AND.SUPPLIES","FURNITURE","LADIES.SOCKS","OPTICAL...FRAMES","PHARMACY.RX","SHEER.HOSIERY","SWIMWEAR.OUTERWEAR","WIRELESS"), 0.7)
+```
+
+```{r, message = FALSE,warning = FALSE}
+# split training and testing dataset
+train.index <- as.data.frame(out$index) 
+colnames(train.index) <- 'index'
+train.index$check <- '1'
+
+train.df <- left_join(full, train.index, by = 'index')
+
+train <- train.df%>%
+  filter(check == '1')
+
+test <- train.df%>%
+  filter(is.na(check) == TRUE)
+```
+
+```{r, message = FALSE,warning = FALSE}
+summary(train) # view data
+```
+
+```{r, message = FALSE,warning = FALSE}
+# output the cleaned dataset
+#write.csv(train, file = '/Users/lizhizicui/Desktop/train.csv')
+#write.csv(test, file = '/Users/lizhizicui/Desktop/test.csv')
+```
+
+## Data Visualization
+```{r}
+ggplot(data = df1) +
+  geom_bar(mapping = aes(x = TripType), colour = 'white', fill = '#FF9933')+
+  labs(x = "TripType", y ='count')+
+  ggtitle('Histogram of TripType Variable')
+```
+
+```{r}
+ggplot(data = df) +
+  geom_histogram(mapping = aes(x = ScanCount), bins = 50, colour = 'white', fill = '#0066FF')+
+  labs(x = "ScanCount", y ='count')+
+  ggtitle('Histogram of ScanCount Variable')
+```
+
+```{r}
+Weekday <- df1%>%
+  group_by(Weekday)%>%
+  count()
+Weekday <- Weekday %>% arrange(desc(n))
+Weekday$n <- as.integer(Weekday$n)
+
+Weekday$Weekday <- as.vector(Weekday$Weekday)
+Weekday$Weekday = factor(Weekday$Weekday,Weekday$Weekday)
+
+ggplot(data = Weekday) +
+  geom_bar(stat="identity", aes(x=Weekday, y=n), colour = 'white', fill = '#0066FF')+
+  labs(x = "Day", y ='count')+
+  ggtitle('Histogram of Weekday Variable')
+```
+
+```{r}
+ggplot(data = df1) +
+  geom_bar(mapping = aes(x = DepartmentDescription,colour = 'white', fill = '#0066FF'))+
+  theme(axis.text.x = element_text(angle = 90))+
+  labs(x = "Categories of Department", y ='count')+
+  ggtitle('Histogram of DepartmentDescription Variable')
+
+```
+
+
+## Models
+```{r}
+train$TripType <- as.factor(train$TripType)
+test$TripType <- as.factor(test$TripType)
+```
+
+```{r}
+# Removing unneccessary index column
+train <- train[,-c(80,81)]
+test <- test[,-c(80,81)]
+```
+
+
+### K-Means  ***
+```{r}
+train.v1 <- read.csv('/Users/lizhizicui/Desktop/Data/train.v1.csv')
+test.v1 <- read.csv('/Users/lizhizicui/Desktop/Data/test.v1.csv')
+```
+
+```{r}
+#K-means
+trainging2 = select(train.v1,-c("TripType","index","DepartmentDescription","Weekday","X","VisitNumber"))
+#prepare data for K-means and Hierarchical clustering
+mt1 = data.matrix(trainging2, rownames.force = NA)
+mt2=scale(mt1)
+
+km.out1=kmeans(mt2,10,nstart=200) #perform k-mean clustering
+
+```
+
+
+```{r}
+plot(mt2,col=(km.out1$cluster),main="K-Means Clustering with K=10", xlab="", ylab="", pch = 20, cex=2)
+#the colors to reflect the clusters we predicted the variables to be.
+
+```
+
+```{r}
+training.T = na.omit(train.v1["TripType"])
+cl = training.T[,1]
+plot(mt2,col=(km.out1$cluster),main="K-Means Clustering with K=10", xlab="", ylab="", pch = cl, cex=2)
+#use different symbols to represent the original triptypes of the data, and still keeping the colors to reflect the clusters we predicted the variables to be
+```
+
+### Hierarchical clustering  ***
+```{r}
+#Hierarchical clustering based with correlation-based distance
+dd2 = as.dist(1-cor(t(mt2)))
+hc.complete2=hclust(dd2,method="complete") #Hierarchical clustering with complete linkage
+
+cutree10 = cutree(hc.complete2, k=10)
+
+hcd = as.dendrogram(hc.complete2)
+```
+
+```{r}
+library(ape)
+plot(as.phylo(hc.complete2), type = "fan")
+#the whole tree
+
+```
+
+```{r}
+plot(cut(hcd, h = 1.2)$upper, main = "Upper tree of cut at h=1.2")
+#top branches of the tree
+```
+
+### KNN ***
+
+```{r}
+#perpare for KNN with 8-catogary data
+training = na.omit(select(train.v1,-c("Weekday","X","index","FinelineNumber","VisitNumber","DepartmentDescription"
+)))
+testing = na.omit(select(test.v1,-c("Weekday","X","index","FinelineNumber","VisitNumber","DepartmentDescription")))
+
+
+training$TripType <- as.factor(training$TripType)
+testing$TripType <- as.factor(testing$TripType)
+```
+
+```{r}
+#KNN method
+trControl=trainControl(method  = "cv",number  = 10) #specific validation type and number of fold using trainControl 
+
+knn.fit <- train(TripType ~ ., #label
+             method     = "knn", #the algorithm you select
+             tuneGrid   = expand.grid(k =  c(6,30,50,100,150:180,200,300)), #grid for hyperparameter
+             preProcess = c("center","scale"), #standardize input data 
+             trControl  = trControl,
+             metric     = "Accuracy", #metric for cv error
+             data       = training) #specify data
+knn.fit
+```
+
+
+```{r}
+test_pred=predict(knn.fit,newdata=testing) #make prediction using testing data (k is automatically set as the optimal value based on cv error)
+confusionMatrix(test_pred, testing$TripType)
+```
+
+### LDA QDA
+```{r}
+da_train <- train[,c(1,3,5:18)] # 8 categories
+da_test <- test[,c(1,3,5:18)] # 8 categories
+
+```
+
+```{r}
+#linear discriminant analysis
+lda.fit=lda(TripType~., data=da_train)
+lda.fit
+lda.pred=predict(lda.fit,da_test)
+lda.class=lda.pred$class #access prediction label
+lda.class
+table(lda.class,da_test$TripType) #print confusion matrix
+mean(lda.class==da_test$TripType) #calculate accuracy
+
+```
+
+```{r}
+#Quadratic Discriminant Analysis
+qda.fit=qda(TripType~ScanCount+Tuesday+Wednesday+Thursday+Friday+Saturday+Sunday,data=da_train)
+qda.fit
+qda.pred=predict(qda.fit,da_test)
+qda.class=qda.pred$class #access prediction label
+qda.class
+table(qda.class,da_test$TripType) #print confusion matrix
+mean(qda.class==da_test$TripType) #calculate accuracy
+```
+
+### SVM
+
+#######################for 8 aggregated departments#######################################################
+
+###creating 8 aggregated departments train set (y for only response variable, x for all predictors)
+```{r}
+
+###creating 8 aggregated departments train set (y for only response variable, x for all predictors)
+train$TripType <- as.factor(train$TripType)
+
+y <- train$TripType
+x <- train[,c(3,5:18)]
+```
+
+
+##creating 8 aggregated departments test set (y.test for only response variable, x.test for all predictors)
+```{r}
+##creating 8 aggregated departments test set (y.test for only response variable, x.test for all predictors)
+test$TripType <- as.factor(test$TripType)
+
+y.test <- test$TripType
+x.test <- test[,c(3,5:18)]
+```
+
+
+##tuning radial SVM manually with c=(0,1,1,10,100); gamma = (0.1,0.5,1,2,3) w/ 8 aggregated departments (tune() was abondaned, because manually tuning is a lot faster than tune())
+```{r}
+##tuning radial SVM manually with c=(0,1,1,10,100); gamma = (0.1,0.5,1,2,3) w/ 8 aggregated departments
+set.seed(66)
+####Gamma = 0.1
+#C=0.01, gamma = 0.1  Accuracy: 0.3077
+svm.Walmart_after_tune_0.01_0.1 <- svm(x,y,kernel = "radial", cost = 0.01, gamma = 0.1)
+pred_after_tune_0.01_0.1 <- predict(svm.Walmart_after_tune_0.01_0.1,x.test)
+confusionMatrix(pred_after_tune_0.01_0.1,y.test)
+
+#C=0.1, gamma = 0.1  Accuracy: 0.3093
+svm.Walmart_after_tune_0.1_0.1 <- svm(x,y,kernel = "radial", cost = 0.1, gamma = 0.1)
+pred_after_tune_0.1_0.1 <- predict(svm.Walmart_after_tune_0.1_0.1,x.test)
+confusionMatrix(pred_after_tune_0.1_0.1,y.test)
+
+#C=1, gamma = 0.1  Accuracy: 0.3102
+svm.Walmart_after_tune_1_0.1 <- svm(x,y,kernel = "radial", cost = 1, gamma = 0.1)
+pred_after_tune_1_0.1 <- predict(svm.Walmart_after_tune_1_0.1,x.test)
+confusionMatrix(pred_after_tune_1_0.1,y.test)
+
+#C=10, gamma = 0.1  Accuracy: 0.3107
+svm.Walmart_after_tune_10_0.1 <- svm(x,y,kernel = "radial", cost = 10, gamma = 0.1)
+pred_after_tune_10_0.1 <- predict(svm.Walmart_after_tune_10_0.1,x.test)
+confusionMatrix(pred_after_tune_10_0.1,y.test)
+
+#C=100, gamma = 0.1  Accuracy: 0.3107
+svm.Walmart_after_tune_100_0.1 <- svm(x,y,kernel = "radial", cost = 100, gamma = 0.1)
+pred_after_tune_100_0.1 <- predict(svm.Walmart_after_tune_100_0.1,x.test)
+confusionMatrix(pred_after_tune_100_0.1,y.test)
+
+
+####gamma = 0.5
+#C=0.01, gamma = 0.5  Accuracy: 0.3057
+svm.Walmart_after_tune_0.01_0.5 <- svm(x,y,kernel = "radial", cost = 0.01, gamma = 0.5)
+pred_after_tune_0.01_0.5 <- predict(svm.Walmart_after_tune_0.01_0.5,x.test)
+confusionMatrix(pred_after_tune_0.01_0.5,y.test)
+
+#C=0.1, gamma = 0.5  Accuracy: 0.3065
+svm.Walmart_after_tune_0.1_0.5 <- svm(x,y,kernel = "radial", cost = 0.1, gamma = 0.5)
+pred_after_tune_0.1_0.5 <- predict(svm.Walmart_after_tune_0.1_0.5,x.test)
+confusionMatrix(pred_after_tune_0.1_0.5,y.test)
+
+#C=1, gamma = 0.5  Accuracy: 0.3098
+svm.Walmart_after_tune_1_0.5 <- svm(x,y,kernel = "radial", cost = 1, gamma = 0.5)
+pred_after_tune_1_0.5 <- predict(svm.Walmart_after_tune_1_0.5,x.test)
+confusionMatrix(pred_after_tune_1_0.5,y.test)
+
+#C=10, gamma = 0.5  Accuracy: 0.3108
+svm.Walmart_after_tune_10_0.5 <- svm(x,y,kernel = "radial", cost = 10, gamma = 0.5)
+pred_after_tune_10_0.5 <- predict(svm.Walmart_after_tune_10_0.5,x.test)
+confusionMatrix(pred_after_tune_10_0.5,y.test)
+
+#C=100, gamma = 0.5  Accuracy: 0.3108
+svm.Walmart_after_tune_100_0.5 <- svm(x,y,kernel = "radial", cost = 100, gamma = 0.5)
+pred_after_tune_100_0.5 <- predict(svm.Walmart_after_tune_100_0.5,x.test)
+confusionMatrix(pred_after_tune_100_0.5,y.test)
+
+
+
+####gamma = 1
+#C=0.01, gamma = 1  Accuracy: 0.3055
+svm.Walmart_after_tune_0.01_1 <- svm(x,y,kernel = "radial", cost = 0.01, gamma = 1)
+pred_after_tune_0.01_1 <- predict(svm.Walmart_after_tune_0.01_1,x.test)
+confusionMatrix(pred_after_tune_0.01_1,y.test)
+
+#C=0.1, gamma = 1  Accuracy: 0.3055
+svm.Walmart_after_tune_0.1_1 <- svm(x,y,kernel = "radial", cost = 0.1, gamma = 1)
+pred_after_tune_0.1_1 <- predict(svm.Walmart_after_tune_0.1_1,x.test)
+confusionMatrix(pred_after_tune_0.1_1,y.test)
+
+#C=1, gamma = 1  Accuracy: 0.3093
+svm.Walmart_after_tune_1_1 <- svm(x,y,kernel = "radial", cost = 1, gamma = 1)
+pred_after_tune_1_1 <- predict(svm.Walmart_after_tune_1_1,x.test)
+confusionMatrix(pred_after_tune_1_1,y.test)
+
+#C=10, gamma = 1  Accuracy: 0.3093
+svm.Walmart_after_tune_10_1 <- svm(x,y,kernel = "radial", cost = 10, gamma = 1)
+pred_after_tune_10_1 <- predict(svm.Walmart_after_tune_10_1,x.test)
+confusionMatrix(pred_after_tune_10_1,y.test)
+
+#C=100, gamma = 1  Accuracy: 0.3093
+svm.Walmart_after_tune_100_1 <- svm(x,y,kernel = "radial", cost = 100, gamma = 1)
+pred_after_tune_100_1 <- predict(svm.Walmart_after_tune_100_1,x.test)
+confusionMatrix(pred_after_tune_100_1,y.test)
+
+
+####gamma = 2
+#C=0.01, gamma = 2  Accuracy: 0.3055
+svm.Walmart_after_tune_0.01_2 <- svm(x,y,kernel = "radial", cost = 0.01, gamma = 2)
+pred_after_tune_0.01_2 <- predict(svm.Walmart_after_tune_0.01_2,x.test)
+confusionMatrix(pred_after_tune_0.01_2,y.test)
+
+#C=0.1, gamma = 2  Accuracy: 0.3055
+svm.Walmart_after_tune_0.1_2 <- svm(x,y,kernel = "radial", cost = 0.1, gamma = 2)
+pred_after_tune_0.1_2 <- predict(svm.Walmart_after_tune_0.1_2,x.test)
+confusionMatrix(pred_after_tune_0.1_2,y.test)
+
+#C=1, gamma = 2  Accuracy: 0.3093
+svm.Walmart_after_tune_1_2 <- svm(x,y,kernel = "radial", cost = 1, gamma = 2)
+pred_after_tune_1_2 <- predict(svm.Walmart_after_tune_1_2,x.test)
+confusionMatrix(pred_after_tune_1_2,y.test)
+
+#C=10, gamma = 2  Accuracy: 0.3093
+svm.Walmart_after_tune_10_2 <- svm(x,y,kernel = "radial", cost = 10, gamma = 2)
+pred_after_tune_10_2 <- predict(svm.Walmart_after_tune_10_2,x.test)
+confusionMatrix(pred_after_tune_10_2,y.test)
+
+#C=100, gamma = 2  Accuracy: 0.3093
+svm.Walmart_after_tune_100_2 <- svm(x,y,kernel = "radial", cost = 100, gamma = 2)
+pred_after_tune_100_2 <- predict(svm.Walmart_after_tune_100_2,x.test)
+confusionMatrix(pred_after_tune_100_2,y.test)
+
+
+
+####gamma = 3
+#C=0.01, gamma = 3  Accuracy: 0.3055
+svm.Walmart_after_tune_0.01_3 <- svm(x,y,kernel = "radial", cost = 0.01, gamma = 3)
+pred_after_tune_0.01_3 <- predict(svm.Walmart_after_tune_0.01_3,x.test)
+confusionMatrix(pred_after_tune_0.01_3,y.test)
+
+#C=0.1, gamma = 3  Accuracy: 0.3055
+svm.Walmart_after_tune_0.1_3 <- svm(x,y,kernel = "radial", cost = 0.1, gamma = 3)
+pred_after_tune_0.1_3 <- predict(svm.Walmart_after_tune_0.1_3,x.test)
+confusionMatrix(pred_after_tune_0.1_3,y.test)
+
+#C=1, gamma = 3  Accuracy: 0.3093
+svm.Walmart_after_tune_1_3 <- svm(x,y,kernel = "radial", cost = 1, gamma = 3)
+pred_after_tune_1_3 <- predict(svm.Walmart_after_tune_1_3,x.test)
+confusionMatrix(pred_after_tune_1_3,y.test)
+
+#C=10, gamma = 3  Accuracy: 0.3093
+svm.Walmart_after_tune_10_3 <- svm(x,y,kernel = "radial", cost = 10, gamma = 3)
+pred_after_tune_10_3 <- predict(svm.Walmart_after_tune_10_3,x.test)
+confusionMatrix(pred_after_tune_10_3,y.test)
+
+#C=100, gamma = 3  Accuracy: 0.3093
+svm.Walmart_after_tune_100_3 <- svm(x,y,kernel = "radial", cost = 100, gamma = 3)
+pred_after_tune_100_3 <- predict(svm.Walmart_after_tune_100_3,x.test)
+confusionMatrix(pred_after_tune_100_3,y.test)
+```
+
+
+##find out the best model between c=10 and c=100 (tune() is a very time-consuming function, so I only use it if there are very close accuracies existed)
+```{r}
+##find out the best model between c=10 and c=100
+svm_tune <- tune(svm, train.x=x, train.y=y, kernel="radial", ranges=list(cost=c(10,100), gamma=0.5))
+print(svm_tune)
+## c=10 has the highest accuracy
+```
+
+##fit the best RBF SVM model with c=10 and gamma=0.5 in Walmart dataset
+```{r}
+##fit the best RBF SVM model with c=10 and gamma=0.5 in Walmart dataset
+svm.Walmart_best <- svm(x,y,kernel = "radial", cost = 10, gamma = 0.5)
+
+summary(svm.Walmart_best)
+
+pred_best <- predict(svm.Walmart_best,x.test)
+
+table(pred_best,y.test)
+confusionMatrix(pred_best,y.test)
+```
+
+##Draw the heatmap from result of confusion matrix
+```{r}
+##Draw the heatmap from result of confusion matrix
+
+#ggplot
+cm <- confusionMatrix(pred_after_tune,y.test)
+data <- as.data.frame(as.table(cm$table))
+library(reshape2)
+melted_cormat <- melt(data) #melt data
+
+melted_cormat$Prediction <- as.factor(melted_cormat$Prediction)
+melted_cormat$Reference <- as.factor(melted_cormat$Reference)
+
+#draw the heatmap
+library(ggplot2)
+ggplot(data = melted_cormat, aes(x=Prediction, y=Reference, fill=value)) + 
+  geom_tile(color = "white")+
+ scale_fill_gradient2(high = "#FF5733", mid = "#FFEC33", limit = c(0,1744),
+   name="Number of Observation") +ggtitle("Aggregated Departments")
+```
+
+
+#######################for 61 original departments#######################################################
+
+##With origianl 61 kinds of Department
+```{r}
+train_v2 <- train
+test_v2 <- test
+
+train_v2$TripType <- as.factor(train_v2$TripType) # factorize variables
+test_v2$TripType <- as.factor(test_v2$TripType) 
+
+
+drops <- c("TripType","Weekday","DepartmentDescription","Monday","A.Service","A.Clothes","A.Household.Product","A.Tool","A.Food","A.Pharmacy","A.Daily.Necessities","A.Electronic.product","A.Other")
+
+x_train_v2 <- train_v2[,!(names(train_v2) %in% drops)]
+y_train_v2 <- train_v2$TripType
+
+x_test_v2 <- test_v2[,!(names(train_v2) %in% drops)]
+y_test_v2 <- test_v2$TripType
+
+svm.Walmart_best_v2 <- svm(x_train_v2, y_train_v2, kernel = "radial", cost = 10, gamma = 0.5)
+pred_best_v2 <- predict(svm.Walmart_best_v2,x_test_v2)
+confusionMatrix(pred_best_v2,y_test_v2) #show the result with confusion matrix
+```
+
+
+
+##draw a new heatmap for improved SVM with more/original # kinds of Department
+```{r}
+##draw a new heatmap for improved SVM with more/original # kinds of Department
+cm_plus <- confusionMatrix(pred_best_v2,y_test_v2)$table #take out the matrix into a variable
+
+#ggplot
+data_plus <- as.data.frame(as.table(cm_plus))
+library(reshape2)
+melted_cormat_plus <- melt(data_plus) #melt data
+
+melted_cormat_plus$Prediction <- as.factor(melted_cormat_plus$Prediction)
+melted_cormat_plus$Reference <- as.factor(melted_cormat_plus$Reference)
+
+#draw the heatmap
+library(ggplot2)
+ggplot(data = melted_cormat_plus, aes(x=Prediction, y=Reference, fill=value)) + 
+  geom_tile(color = "white")+
+ scale_fill_gradient2(high = "#FF5733", mid = "#FFEC33", limit = c(0,600),
+   name="Number of Observation") +ggtitle("Improved w/ Original Departments")
+
+```
+
+### Random Forest
+```{r}
+# RF-Model Subsetting
+rf.df1 <- train[,c(1,2,3,11:18)] # 8 categories + Weekday + ScanCount
+rf.df2 <- train[,c(1,2,3,19:79)] # 61 categories + Weekday + ScanCount
+rf.df2.2 <- train[,c(1,19:79)] # 61 categories
+```
+
+```{r}
+# RF mtry tuning
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
+metric <- "Accuracy"
+set.seed(999)
+mtry <- sqrt(ncol(rf.df1))
+rf_random <- train(TripType~., data=rf.df1, method="rf", metric=metric, tuneLength=15, trControl=control)
+print(rf_random)
+plot(rf_random)
+```
+
+```{r}
+# Basic Random Forest Model
+rf.basic = randomForest(TripType ~ ., data=rf.df1, ntree = 500, mtry=3, importance=TRUE)
+rf.basic
+
+# Prediction Result of Basic Random Forest Model
+yhat.rf=predict(rf.basic,newdata=test,type = "class")
+rf.test=test$TripType
+tbl <- table(rf.test, yhat.rf)
+sum(diag(tbl))/sum(tbl)
+```
+
+```{r}
+# Importance of variables
+importance(rf.basic)
+```
+
+```{r}
+# Variables Importance Plot
+varImpPlot(rf.basic)
+```
+
+
+```{r}
+# Random Forest Model with important variables only
+rf.imp=randomForest(TripType~A.Clothes+A.Food+A.Daily.Necessities+A.Pharmacy+A.Household.Product+A.Service+A.Tool+A.Electronic.product,data=rf.df1, mtry=3, importance=TRUE, ntree = 500)
+rf.imp
+
+# Prediction Result of Random Forest Model with important variables only
+yhat.rf=predict(rf.imp,newdata=test,type = "class")
+rf.test=test$TripType
+tbl <- table(rf.test, yhat.rf)
+sum(diag(tbl))/sum(tbl)
+```
+
+
+```{r}
+# Improved Random Forest Model with more department categories
+mtry <- sqrt(ncol(rf.df2.2))
+rf2=randomForest(TripType~.,data=rf.df2.2,mtry = 7, importance=TRUE, ntree = 500)
+rf2
+
+# Prediction result of the Improved Random Forest Model
+yhat.rf=predict(rf2,newdata=test)
+rf.test=test$TripType
+tbl <- table(rf.test, yhat.rf)
+sum(diag(tbl))/sum(tbl)
+```
+
+```{r}
+# Improved Random Forest Model with more department categories
+mtry <- sqrt(ncol(rf.df2.2))
+rf2=randomForest(TripType~.,data=rf.df2.2,mtry = 6, importance=TRUE, ntree = 500)
+rf2
+
+# Prediction result of the Improved Random Forest Model
+yhat.rf=predict(rf2,newdata=test)
+rf.test=test$TripType
+tbl <- table(rf.test, yhat.rf)
+sum(diag(tbl))/sum(tbl)
+```
+
+```{r}
+# Importance of variables
+importance(rf2)
+```
+
+```{r}
+# Variables Importance Plot
+varImpPlot(rf2)
+```
+
+
+### XGBoost ***
+```{r}
+# Combind original datasets and Remove unneccessary variables
+total <- rbind(train,test)
+total <- total[,c(1,3:18)] #8 categories, 16 features in total
+```
+
+```{r}
+#Convert categorical response variable to integers starting at 0
+triptype = total$TripType
+triptype = as.factor(triptype)
+label = as.integer(triptype)-1
+total$TripType = NULL
+```
+
+```{r}
+#Split training and testing dataset
+#Label convertion
+set.seed(1)
+n = nrow(total)
+train.index = sample(n,floor(0.75*n))
+train.data = as.matrix(total[train.index,])
+train.label = label[train.index]
+test.data = as.matrix(total[-train.index,])
+test.label = label[-train.index]
+```
+
+```{r}
+library(xgboost)
+# Transform the two data sets into xgb.Matrix
+xgb.train = xgb.DMatrix(data=train.data,label=train.label)
+xgb.test = xgb.DMatrix(data=test.data,label=test.label)
+```
+
+```{r}
+# Define the parameters for multinomial classification
+num_class = length(levels(triptype))
+params = list(
+  booster="gbtree",
+  eta=0.3,
+  max_depth=13,
+  gamma=2,
+  subsample=0.75,
+  colsample_bytree=1,
+  objective="multi:softprob",
+  eval_metric="merror",
+  num_class=num_class
+)
+```
+
+```{r}
+# Train the XGBoost classifer
+xgb.fit1=xgb.train(
+  params=params,
+  data=xgb.train,
+  nrounds=10000,
+  nthreads=1,
+  early_stopping_rounds=10,
+  watchlist=list(val1=xgb.train,val2=xgb.test),
+  verbose=0
+)
+```
+
+```{r}
+# Review the final model and results
+xgb.fit1
+```
+
+```{r}
+# Predict outcomes with the test data
+xgb.pred = predict(xgb.fit1,test.data,reshape=T)
+xgb.pred = as.data.frame(xgb.pred)
+colnames(xgb.pred) = levels(triptype)
+```
+
+```{r}
+# Use the predicted label with the highest probability
+xgb.pred$prediction = apply(xgb.pred,1,function(x) colnames(xgb.pred)[which.max(x)])
+xgb.pred$label = levels(triptype)[test.label+1]
+```
+
+```{r}
+# Calculate the final accuracy
+result = sum(xgb.pred$prediction==xgb.pred$label)/nrow(xgb.pred)
+print(paste("Final Accuracy =",sprintf("%1.2f%%", 100*result)))
+```
+### Perform XGBoost using 69 features
+```{r}
+#Upload dataset 
+all <- rbind(train,test)
+dim(all)
+```
+
+```{r}
+#Remove unnecessary variables
+all <- all[,-c(1,3,81,82,12:19)]
+head(all)
+```
+
+```{r}
+#Convert categorical response variable to integers starting at 0
+triptype = all$TripType
+triptype = as.factor(triptype)
+label = as.integer(triptype)-1
+all$TripType = NULL
+```
+
+```{r}
+#Split train2ing and test2ing dataset
+#Label convertion
+n = nrow(all)
+train2.index = sample(n,floor(0.75*n))
+train2.data = as.matrix(all[train2.index,])
+train2.label = label[train2.index]
+test2.data = as.matrix(all[-train2.index,])
+test2.label = label[-train2.index]
+```
+
+```{r}
+# Transform the two data sets into xgb.Matrix
+xgb.train2 = xgb.DMatrix(data=train2.data, label=train2.label)
+xgb.test2 = xgb.DMatrix(data=test2.data,label=test2.label)
+```
+
+```{r}
+# Define the parameters for multinomial classification
+num_class = length(levels(triptype))
+params = list(
+  booster="gbtree",
+  eta=0.01,
+  max_depth=25,
+  gamma=2,
+  subsample=0.75,
+  colsample_bytree=1,
+  objective="multi:softprob",
+  eval_metric="merror",
+  num_class=num_class
+)
+```
+
+```{r}
+# train2 the XGBoost classifer
+xgb.fit2=xgb.train(
+  params=params,
+  data=xgb.train2,
+  nrounds=10000,
+  nthreads=1,
+  early_stopping_rounds=10,
+  watchlist=list(val1=xgb.train2,val2=xgb.test2),
+  verbose=0
+)
+```
+
+```{r}
+# Review the final model and results
+xgb.fit2
+```
+
+```{r}
+# pred2ict outcomes with the test2 data
+xgb.pred2 = predict(xgb.fit2,test2.data,reshape=T)
+xgb.pred2 = as.data.frame(xgb.pred2)
+colnames(xgb.pred2) = levels(triptype)
+```
+
+```{r}
+# Use the pred2icted label with the highest probability
+xgb.pred2$prediction = apply(xgb.pred2,1,function(x) colnames(xgb.pred2)[which.max(x)])
+xgb.pred2$label = levels(triptype)[test2.label+1]
+```
+
+```{r}
+# Calculate the final accuracy
+result = sum(xgb.pred2$prediction==xgb.pred2$label)/nrow(xgb.pred2)
+print(paste("Final Accuracy =",sprintf("%1.2f%%", 100*result)))
+```
+
+```{r}
+#Show the root tree
+xgb.plot.tree(model =xgb.fit2, trees = 0, show_node_id = FALSE)
+```
+
+```{r}
+#Generate importance plot
+importance_matrix <- xgb.importance(colnames(xgb.train2), model = xgb.fit2)
+xgb.ggplot.importance(
+  importance_matrix,
+  top_n = NULL,
+  measure = NULL,
+  rel_to_first = FALSE,
+  n_clusters = c(1:10),
+)
+```
+
+
+
